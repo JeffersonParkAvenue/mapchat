@@ -1,0 +1,205 @@
+<body>
+    <input id=textbox type=text></input>
+    </body>
+    <style>
+    body { margin: 0 }
+    #textbox
+        { position: absolute
+        ; bottom: 0
+        ; width: 100%
+        ; border: none
+        ; padding: 1em
+        }
+    </style>
+
+    <script src="https://threejs.org/build/three.js"></script>
+    <!--script src='./three.min.js'></script-->
+    <script>
+
+    const username = new URLSearchParams(window.location.search).get('username') || 'nouser'
+
+    const wrapped =
+        c => max_width => text =>
+    {
+        const words = text.match(/\S+/g) || []
+
+        return words.reduce((lines, word) => {
+
+            const old   = lines.pop()
+            const nieuw = `${old} ${word}`
+
+            return c.measureText(nieuw).width <= max_width
+                ? [...lines, nieuw]
+                : [...lines, old, word]
+
+        }, [words.shift()]).join('\n')
+    }
+
+    const draw_text =
+        ({ c, lineHeight: lh }) => (centerX, centerY) => text =>
+    {
+        const lines = text.split('\n')
+
+        const topY = centerY + lh * (1 - lines.length) / 2
+
+        for (let i = 0; i < lines.length; ++i)
+            c.fillText(lines[i], centerX, topY + lh * i)
+    }
+
+    const character = name => {
+        const cube = new THREE.Mesh
+            ( new THREE.BoxGeometry( 1, 1, 1 )
+            , new THREE.MeshLambertMaterial( { color: 0x00ff00 } )
+            )
+
+        const canv = document.createElement('canvas')
+        canv.width = 200
+        canv.height = 200
+        const c = canv.getContext('2d')
+        c.fillStyle = '#fff'
+        c.fillRect(0, 0, canv.width, canv.height)
+        c.fillStyle = '#f0f'
+        c.font = '30px Arial'
+        c.textAlign = 'center'
+        c.textBaseline = 'middle'
+
+
+
+        //c.fillText('hoo', 50, 50)
+
+        //.querySelector('body').appendChild(canv)
+
+        const text_ure = new THREE.CanvasTexture(canv)
+
+        const text_plane = new THREE.Mesh
+            ( new THREE.PlaneGeometry(2, 2)
+            , new THREE.MeshBasicMaterial({ map: text_ure, transparent: true })
+            )
+        text_plane.lookAt(camera.position)
+        text_plane.position.y = 1
+
+        const group = new THREE.Group()
+        group.add(text_plane)
+        group.add(cube)
+
+        const say = text => {
+            text = `<${name}>\n${text}`
+            console.log('zz')
+            c.clearRect(0, 0, canv.width, canv.height)
+            draw_text
+                ({ c, lineHeight: 28 })
+                (canv.width/2, canv.height/2)
+                (wrapped(c)(canv.width)(text || ''))
+            //c.fillText(text, 50, 50)
+            text_plane.material.map.needsUpdate = true
+        }
+        say()
+
+        return { group, say }
+
+    }
+
+    var scene = new THREE.Scene();
+
+    //var camera = new THREE.PerspectiveCamera( 75, window.innerWidth/window.innerHeight, 0.1, 1000 );
+    const [width, height] = [window.innerWidth / 100, window.innerHeight / 100]
+    const camera = new THREE.OrthographicCamera( width / -2, width / 2, height / 2, height / -2, 0.1, 1000 );
+    scene.add( camera );
+    camera.position.set(5, 5, 5)
+
+
+    var renderer = new THREE.WebGLRenderer();
+
+
+    renderer.setSize( window.innerWidth, window.innerHeight );
+    window.onresize = _ => renderer.setSize(window.innerWidth, window.innerHeight)
+
+    document.body.appendChild( renderer.domElement );
+
+      camera.lookAt(0, 0, 0)
+
+    var ground = new THREE.Mesh
+        ( new THREE.PlaneGeometry( 100, 100 )
+        , new THREE.MeshBasicMaterial({ color: 0xff0ff })
+        )
+    ground.rotation.x = -Math.PI/2
+    scene.add(ground)
+
+    const directionalLight = new THREE.DirectionalLight( 0xffffff, 1 );
+    scene.add( directionalLight );
+    scene.position.set(1, 1, 1)
+
+    var animate = function () {
+        requestAnimationFrame( animate );
+        renderer.render( scene, camera );
+    };
+
+    animate();
+
+    const TEXTBOX = document.querySelector('#textbox')
+
+    ;(async _=>{
+    const players = {}
+    const host = 'hoova.herokuapp.com'
+
+    let name
+    let sock
+    
+    // try to connect
+    name = prompt("jim eddie ryan wishes to know your 'name'. please enter it.")
+    sock = new WebSocket(`ws://${host}/chat/${name}`)
+
+    // display incoming messages
+    sock.onmessage = e => {
+        console.log(e.data)
+        const j = JSON.parse(e.data)
+        if (j.type === 'existance') {
+            players[j.username] = character(j.username)
+            players[j.username].group.position.set(j.x, j.y, j.z)
+            scene.add(players[j.username].group)
+        } else if (j.type === 'move') {
+            players[j.username].group.position.set(j.x, j.y, j.z)
+        } else if (j.type === 'say') {
+            players[j.username].say(j.message)
+        } else if (j.type === 'nonexistance') {
+            scene.remove(players[j.username].group)
+            delete players[j.username]
+        } else if (j.type === 'reject') {
+            name = prompt("jim eddie ryan wishes to know your 'name'. please enter it. ")
+            const newsocket = new WebSocket(`ws://${host}/chat/${name}`)
+            newsocket.onmessage = sock.onmessage
+            sock = newsocket
+        }
+    }
+
+    const send_json = json => sock.send(JSON.stringify(json)) 
+
+    const send_message = msg => sock.send(JSON.stringify({ type: 'say', message: msg }))
+
+    // send messages from textbox
+    TEXTBOX.addEventListener('keypress', e => {
+        if (e.key !== 'Enter') return
+        send_message(TEXTBOX.value)
+        TEXTBOX.value = ''
+    })
+
+    const raycaster = new THREE.Raycaster()
+    const mouse = new THREE.Vector2()
+    const raycast = e => {
+        console.log('hoo')
+        mouse.x = ( event.clientX / window.innerWidth ) * 2 - 1;
+        mouse.y = - ( event.clientY / window.innerHeight ) * 2 + 1;
+        raycaster.setFromCamera( mouse, camera );
+        const intersections = raycaster.intersectObject(ground)
+        if (intersections.length === 0) return
+        console.log(intersections[0])
+        //group.position = intersections[0].point
+        const p = intersections[0].point
+        //me.group.position.set(p.x, p.y, p.z)
+        send_json({ type: 'move', x: p.x, y: p.y, z: p.z })
+    }
+
+    renderer.domElement.addEventListener('click', raycast, false)
+
+    })();
+    </script>
